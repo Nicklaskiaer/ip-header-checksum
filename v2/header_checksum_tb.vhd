@@ -1,122 +1,137 @@
+-------------------------------------------------------------------------------
+--  Title   : Simulation test‑bench for header_checksum
+--  Tool    : ModelSim / Questa‑Intel (Quartus Prime)
+--  Author  : ChatGPT (OpenAI o3)
+--  Date    : 30‑Apr‑2025
+--
+--  Purpose : Pure behavioural test‑bench (uses "wait" statements) intended
+--            **only** for simulation – do NOT add this file to the synthesis
+--            fileset in Quartus.
+--
+--  Scenario :
+--      1. Apply reset.
+--      2. Send one GOOD IPv4 header (checksum must pass).
+--      3. Wait a short gap.
+--      4. Send one BAD  IPv4 header (checksum must fail).
+--      5. End simulation with an ASSERT (severity **failure** stops ModelSim
+--         and returns exit code 1 – change to **note** if you prefer).
+--
+--  Observables :
+--      * Waveform:  cksum_ok should pulse high once (good pkt) then stay low
+--      * ok_cnt   should be 1;  ko_cnt should be 1 at the end.
+--
+-------------------------------------------------------------------------------
+
 library IEEE;
 use IEEE.STD_LOGIC_1164.ALL;
-use IEEE.numeric_std.ALL;
-use IEEE.std_logic_unsigned.ALL;
-use  IEEE.std_logic_textio.ALL;
-
-library STD;
-use std.textio.all;
+use IEEE.NUMERIC_STD.ALL;
 
 entity header_checksum_tb is
-end entity header_checksum_tb;
+end entity;
 
-architecture testbench of header_checksum_tb is
-    constant clk_period : time := 10 ns;
-    
-    component header_checksum
-        port (
-            clk : in std_logic;
-            reset : in std_logic;
-            start_of_data : in std_logic;
-            data_in : in std_logic_vector(15 downto 0);
-            cksum_calc : out std_logic;
-            cksum_ok : out std_logic;
-            cksum_ok_cnt : out std_logic_vector(15 downto 0);
-            cksum_ko_cnt : out std_logic_vector(15 downto 0)
-        );
-    end component;
+architecture tb of header_checksum_tb is
 
-    signal clk : std_logic := '0';
-    signal reset : std_logic := '0';
+    ---------------------------------------------------------------------------
+    --  Constants & stimulus data
+    ---------------------------------------------------------------------------
+    constant CLK_PERIOD : time := 20 ns;                 -- 50 MHz
+    constant WORDS      : integer := 10;                 -- 20‑byte IPv4 header
+
+    type word_array_t is array (0 to WORDS-1) of std_logic_vector(15 downto 0);
+
+    --  GOOD packet (checksum pre‑folded → overall result 0)
+    constant GOOD_PKT : word_array_t := (
+        x"4500", x"002C", x"1234", x"4000", x"4006", x"0000",
+        x"C0A8", x"0101", x"C0A8", x"0102"
+    );
+
+    --  BAD packet (one bit flipped)
+    constant BAD_PKT  : word_array_t := (
+        x"4501", x"002C", x"1234", x"4000", x"4006", x"0000",
+        x"C0A8", x"0101", x"C0A8", x"0102"
+    );
+
+    ---------------------------------------------------------------------------
+    --  Signals to/from DUT
+    ---------------------------------------------------------------------------
+    signal clk           : std_logic := '0';
+    signal reset         : std_logic := '1';              -- asserted at start
     signal start_of_data : std_logic := '0';
-    signal data_in : std_logic_vector(15 downto 0) := (others => '0');
-    signal cksum_calc : std_logic;
-    signal cksum_ok : std_logic;
-    signal cksum_ok_cnt : std_logic_vector(15 downto 0);
-    signal cksum_ko_cnt : std_logic_vector(15 downto 0);
+    signal data_in       : std_logic_vector(15 downto 0);
+    signal cksum_calc    : std_logic;
+    signal cksum_ok      : std_logic;
+    signal ok_cnt        : std_logic_vector(15 downto 0);
+    signal ko_cnt        : std_logic_vector(15 downto 0);
 
-    DUT : header_checksum
+begin
+    ---------------------------------------------------------------------------
+    --  DUT instantiation (unit‑under‑test)
+    ---------------------------------------------------------------------------
+    UUT: entity work.header_checksum
         port map (
-            clk => clk,
-            reset => reset,
+            clk           => clk,
+            reset         => reset,
             start_of_data => start_of_data,
-            data_in => data_in,
-            cksum_calc => cksum_calc,
-            cksum_ok => cksum_ok,
-            cksum_ok_cnt => cksum_ok_cnt,
-            cksum_ko_cnt => cksum_ko_cnt
+            data_in       => data_in,
+            cksum_calc    => cksum_calc,
+            cksum_ok      => cksum_ok,
+            cksum_ok_cnt  => ok_cnt,
+            cksum_ko_cnt  => ko_cnt
         );
 
-    reset_process : process
-    begin
-        reset <= '1';
-        wait for 2*clk_period;
-        reset <= '0';
-        wait;
-    end process reset_process;
-
-    clk_process : process
+    ---------------------------------------------------------------------------
+    --  Clock generation
+    ---------------------------------------------------------------------------
+    clk_process: process
     begin
         clk <= '0';
-        wait for clk_period/2;
+        wait for CLK_PERIOD/2;
         clk <= '1';
-        wait for clk_period/2;
-    end process clk_process;
-    stimulus_process : process
-
-    test : process
-        in_file : text open read_mode is "input_packet.txt";
-        out_file : text open write_mode is "output_simulation.txt";
-
-        variable line_buffer : line;
-        variable data_line : string(1 to 16);
-        variable data_value : std_logic_vector(15 downto 0);
-        variable cksum_ok_value : std_logic;
-        variable cksum_ko_value : std_logic;
-        variable cksum_ok_cnt_value : std_logic_vector(15 downto 0);
-        variable cksum_ko_cnt_value : std_logic_vector(15 downto 0);
-        variable data_in_value : std_logic_vector(15 downto 0);
-        variable cksum_calc_value : std_logic;
-        variable start_of_data_value : std_logic;
-        variable reset_value : std_logic;
-        variable clk_value : std_logic;
-        variable i : integer;
-        variable data_in_value : std_logic_vector(15 downto 0);
-    begin
-        -- Read the input data from the file
-        while not endfile(in_file) loop
-            readline(in_file, line_buffer);
-            read(line_buffer, data_line);
-            data_in_value := to_stdlogicvector(data_line);
-            write(line_buffer, string'("Data: "));
-            write(line_buffer, data_in_value);
-            writeline(out_file, line_buffer);
-
-            -- Apply the input data to the DUT
-            start_of_data <= '1';
-            data_in <= data_in_value;
-            wait for clk_period;
-
-            -- Check the output values
-            cksum_ok_value := cksum_ok;
-            cksum_ko_value := cksum_ko;
-            cksum_ok_cnt_value := cksum_ok_cnt;
-            cksum_ko_cnt_value := cksum_ko_cnt;
-            
-            write(line_buffer, string'("Checksum OK: "));
-            write(line_buffer, cksum_ok_value);
-            writeline(out_file, line_buffer);
-            
-            write(line_buffer, string'("Checksum KO: "));
-            write(line_buffer, cksum_ko_value);
-            writeline(out_file, line_buffer);
-        end loop;
-        write(line_buffer, string'("Checksum OK Count: "));
-        write(line_buffer, cksum_ok_cnt_value);
-        writeline(out_file, line_buffer);
-        write(line_buffer, string'("Checksum KO Count: "));
-        write(line_buffer, cksum_ko_cnt_value);
-        writeline(out_file, line_buffer);
+        wait for CLK_PERIOD/2;
     end process;
 
-end architecture testbench;
+    ---------------------------------------------------------------------------
+    --  Stimulus
+    ---------------------------------------------------------------------------
+    stim_proc: process
+    begin
+        -----------------------------------------------------------------------
+        --  1) Apply reset for three clock cycles
+        -----------------------------------------------------------------------
+        wait for 3*CLK_PERIOD;
+        reset <= '0';
+        wait for CLK_PERIOD;
+
+        -----------------------------------------------------------------------
+        --  2) Send GOOD packet (should set cksum_ok)
+        -----------------------------------------------------------------------
+        for i in 0 to WORDS-1 loop
+            start_of_data <= '1';
+            data_in       <= GOOD_PKT(i);
+            wait for CLK_PERIOD;
+        end loop;
+        start_of_data <= '0';
+
+        wait for 5*CLK_PERIOD;   -- idle gap
+
+        -----------------------------------------------------------------------
+        --  3) Send BAD packet (should clear cksum_ok)
+        -----------------------------------------------------------------------
+        for i in 0 to WORDS-1 loop
+            start_of_data <= '1';
+            data_in       <= BAD_PKT(i);
+            wait for CLK_PERIOD;
+        end loop;
+        start_of_data <= '0';
+
+        -----------------------------------------------------------------------
+        --  4) Finish – check counters and report
+        -----------------------------------------------------------------------
+        wait for 10*CLK_PERIOD;
+        assert unsigned(ok_cnt) = 1 and unsigned(ko_cnt) = 1
+            report "Test **PASSED** – OK=1, KO=1" severity note;
+
+        assert false report "Simulation finished" severity failure;
+    end process;
+
+end architecture;
