@@ -1,0 +1,124 @@
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+use ieee.std_logic_unsigned.all;
+
+entity DE10_LITE_Empty_Top is
+	port(
+			ADC_CLK_10			:	in 	std_logic;
+			KEY					:	in	std_logic_vector(1 downto 0);		
+			LEDR				:	out std_logic_vector(7 downto 0);
+			HEX0				:	out	bit_vector(7 downto 0);
+			HEX1				: 	out	bit_vector(7 downto 0);
+			HEX2				:	out	bit_vector(7 downto 0);
+			HEX3				:	out	bit_vector(7 downto 0)
+
+		);
+end entity;
+
+architecture header_checksum_arch of DE10_LITE_Empty_Top is
+
+	component header_checksum is
+		port(
+			Clock				:	in 		std_logic;	
+			reset				:	in 		std_logic;	
+			start_of_data		:	in		std_logic;	
+			data_in				:	in		std_logic_vector(7 downto 0);
+			cksum_calc			:	out		std_logic;
+			cksum_ok			:	out		std_logic;
+			cksum_ok_cnt		:	out		std_logic_vector(15 downto 0);
+			cksum_ko_cnt		:	out		std_logic_vector(15 downto 0)
+			);
+	end component;
+	
+	component test_data is
+		port	(
+				clock				:	in		std_logic;
+				address				:	in 		std_logic_vector(11 downto 0);
+				data_out			:	out		std_logic_vector(8 downto 0));
+	end component;
+	
+	component display_8_bit_value is
+	
+		port (
+				data				:	in 		std_logic_vector(3 downto 0);
+				HEX					:	out 	bit_vector(7 downto 0)
+			);
+	end component;
+
+	---------------------------------------
+	
+	signal data_out_signal 			: std_logic_vector(8 downto 0) := x"00"&'0';
+	
+	signal address_signal 			: std_logic_vector(11 downto 0):=x"000"; 
+	signal data_0					: std_logic_vector(3 downto 0) := x"0";
+	signal data_1					: std_logic_vector(3 downto 0) := x"0";
+	signal data_2					: std_logic_vector(3 downto 0) := x"0";
+	signal data_3					: std_logic_vector(3 downto 0) := x"0";
+	signal counter_OK				: std_logic_vector(15 downto 0)  := x"0000";
+	signal counter_KO				: std_logic_vector(15 downto 0)  := x"0000";
+	signal data_to_checksum			: std_logic_vector(7 downto 0) := x"00";
+	signal data_sof					: std_logic:= '0';
+	signal start					: std_logic:= '0';
+	
+begin
+	
+	instance_test_data : test_data port map (
+									clock => ADC_CLK_10, 
+									address => address_signal, 
+									data_out => data_out_signal
+									);
+	
+
+	instance_header_checksum : header_checksum port map (
+																		Clock => ADC_CLK_10, 
+																		reset => KEY(1), 
+																		start_of_data => data_Sof, 
+																		data_in => data_to_checksum,
+																		cksum_calc => LEDR(0), 
+																		cksum_ok => LEDR(1), 
+																		cksum_ok_cnt => counter_OK, 
+																		cksum_ko_cnt => counter_KO
+																		);
+																		
+
+	instance_0_display_8_bit_value : display_8_bit_value port map(data => data_0, HEX => HEX0);
+	instance_1_display_8_bit_value : display_8_bit_value port map(data => data_1, HEX => HEX1);
+	instance_2_display_8_bit_value : display_8_bit_value port map(data => data_2, HEX => HEX2);
+	instance_3_display_8_bit_value : display_8_bit_value port map(data => data_3, HEX => HEX3);
+																						
+																	
+	Address_choser : process (ADC_CLK_10)
+		begin
+			if (ADC_CLK_10'event and ADC_CLK_10='1') then
+			
+				if (KEY(1) = '0') then -- reset
+					address_signal 	<= x"000";
+					data_0				<= x"0";	
+					data_1				<= x"0";	
+					data_2				<= x"0";	
+					data_3				<= x"0";
+					data_to_checksum	<= x"00";	
+					data_sof				<= '0';
+					start					<= '0';
+					
+				elsif (key(0) = '0' or start = '1') then -- start data flow
+					start <= '1';
+					
+					data_0 <= counter_OK(3 downto 0);
+					data_1				<= x"0";
+
+					data_2 <= counter_KO(3 downto 0);
+					data_3				<= x"0";				
+
+					data_to_checksum <= data_out_signal(8 downto 1);
+					data_sof <= data_out_signal(0);
+					if (address_signal < x"FF0") then
+						address_signal <= address_signal + "1";
+					end if;
+				end if;
+		end if;
+				
+	end process;
+			
+end header_checksum_arch;
